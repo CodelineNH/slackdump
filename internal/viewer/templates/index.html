@@ -137,24 +137,30 @@
         aria-selected="{{ if not .CanvasActive }}true{{ else }}false{{ end }}"
         aria-controls="tab-panel-conversation"
         id="tab-btn-conversation">Conversation</button>
-    <button {{ if .Interactive }}hx-get="{{ canvasurl .Conversation.ID }}"
+    {{ $active := .ActiveCanvasID }}
+    {{ $canvasActive := .CanvasActive }}
+    {{ $interactive := .Interactive }}
+    {{ $channelID := .Conversation.ID }}
+    {{ range $idx, $c := canvas_tabs .Conversation }}
+    {{ $isActive := and $canvasActive (eq $c.FileID $active) }}
+    <button {{ if $interactive }}hx-get="{{ canvasbyfileurl $channelID $c.FileID }}"
         hx-target="#conversation" hx-swap="innerHTML"{{ end }}
-        class="tab{{ if .CanvasActive }} selected{{ end }}{{ if not .CanvasAvailable }} disabled{{ end }}"
+        class="tab{{ if $isActive }} selected{{ end }}"
         role="tab"
-        tabindex="{{ if .CanvasActive }}0{{ else }}-1{{ end }}"
-        aria-selected="{{ if .CanvasActive }}true{{ else }}false{{ end }}"
-        aria-controls="tab-panel-canvas"
-        id="tab-btn-canvas"
-        {{ if not .CanvasAvailable }}disabled{{ end }}>Canvas</button>
+        tabindex="{{ if $isActive }}0{{ else }}-1{{ end }}"
+        aria-selected="{{ if $isActive }}true{{ else }}false{{ end }}"
+        aria-controls="tab-panel-canvas-{{ $c.FileID }}"
+        id="tab-btn-canvas-{{ $c.FileID }}">{{ $c.Label }}</button>
+    {{ end }}
 </div>
 {{ end }}
 
 {{ define "hx_canvas" }}
 {{ template "conversation_header" . }}
-<div class="canvas-container" id="tab-panel-canvas" role="tabpanel" aria-labelledby="tab-btn-canvas" tabindex="0">
-    {{ if .CanvasAvailable }}
+<div class="canvas-container" id="tab-panel-canvas-{{ .ActiveCanvasID }}" role="tabpanel" aria-labelledby="tab-btn-canvas-{{ .ActiveCanvasID }}" tabindex="0">
+    {{ if .ActiveCanvasID }}
     <iframe class="canvas-frame"
-        src="{{ canvascontenturl .Conversation.ID }}"
+        src="{{ canvascontentbyfile .Conversation.ID .ActiveCanvasID }}"
         sandbox="allow-same-origin">
     </iframe>
     {{ else }}

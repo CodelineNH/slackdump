@@ -49,8 +49,8 @@ type PageRenderer interface {
 	RenderChannel(ctx context.Context, channelID string, w io.Writer) error
 	RenderThread(ctx context.Context, channelID, threadTS string, w io.Writer) error
 	RenderUser(ctx context.Context, userID string, w io.Writer) error
-	RenderCanvas(ctx context.Context, channelID string, w io.Writer) error
-	RenderCanvasContent(ctx context.Context, channelID string, w io.Writer) error
+	RenderCanvas(ctx context.Context, channelID, fileID string, w io.Writer) error
+	RenderCanvasContent(ctx context.Context, channelID, fileID string, w io.Writer) error
 }
 
 // compile-time check that *Viewer implements PageRenderer.
@@ -154,6 +154,8 @@ func New(ctx context.Context, addr string, r source.Sourcer, opts ...Option) (*V
 	mux.HandleFunc("GET /archives/{id}", v.newFileHandler(v.channelHandler))
 	mux.HandleFunc("GET /archives/{id}/canvas", v.newFileHandler(v.canvasHandler))
 	mux.HandleFunc("GET /archives/{id}/canvas/content", v.newFileHandler(v.canvasContentHandler))
+	mux.HandleFunc("GET /archives/{id}/canvas/{fileID}", v.newFileHandler(v.canvasHandler))
+	mux.HandleFunc("GET /archives/{id}/canvas/{fileID}/content", v.newFileHandler(v.canvasContentHandler))
 	// https: //ora600.slack.com/archives/DHMAB25DY/p1710063528879959
 	// https://ora600.slack.com/archives/CHY5HUESG/p1738580940349469?thread_ts=1737716342.919259&cid=CHY5HUESG
 	mux.HandleFunc("GET /archives/{id}/alias/", v.aliasHandler)

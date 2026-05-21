@@ -42,8 +42,10 @@ func initTemplates(v *Viewer) {
 			"threadmsgurl":     v.rts.ThreadMessage,
 			"userurl":          v.rts.User,
 			"profileurl":       v.profileURL,
-			"canvasurl":        v.rts.Canvas,
-			"canvascontenturl": v.rts.CanvasContent,
+			"canvasurl":           v.rts.Canvas,
+			"canvascontenturl":    v.rts.CanvasContent,
+			"canvasbyfileurl":     v.rts.CanvasByFile,
+			"canvascontentbyfile": v.rts.CanvasContentByFile,
 			"staticasset":      v.rts.StaticAsset,
 			"chlink": func(ch slack.Channel, interactive bool) channelLinkView {
 				return channelLinkView{Channel: ch, Interactive: interactive}
@@ -61,7 +63,8 @@ func initTemplates(v *Viewer) {
 			"rendertext":      func(s string) string { return v.r.RenderText(context.Background(), s) },            // render message text
 			"render":          func(m slack.Message) template.HTML { return v.r.Render(context.Background(), &m) }, // render message
 			"is_thread_start": func(m slack.Message) bool { return st.IsThreadStart(&m) },
-			"canvas_present":  func(ch slack.Channel) bool { return ch.Properties != nil && ch.Properties.Canvas.FileId != "" },
+			"canvas_present":  func(ch slack.Channel) bool { return len(v.availableCanvasTabs(ch)) > 0 },
+			"canvas_tabs":     v.availableCanvasTabs,
 			"msgview": func(channelID string, m slack.Message) messageView {
 				return messageView{Msg: m, ChannelID: channelID, Interactive: v.rts.Interactive()}
 			},
@@ -73,6 +76,48 @@ func initTemplates(v *Viewer) {
 type channelLinkView struct {
 	Channel     slack.Channel
 	Interactive bool
+}
+
+// canvasTab describes one canvas attached to a channel — used by the template
+// to render one tab button per canvas.
+type canvasTab struct {
+	FileID string
+	Label  string
+}
+
+// availableCanvasTabs returns the canvas tabs to render for a channel,
+// filtered to those whose file is actually present in storage. Canvases are
+// stored as entries in Properties.Tabs[] with Type=="canvas". The Tab.ID
+// field has been rewritten by the dumper to hold the canvas file ID
+// (rather than the opaque Slack tab ID) — see rebuildCanvasTabs in the
+// stream package.
+func (v *Viewer) availableCanvasTabs(ch slack.Channel) []canvasTab {
+	if ch.Properties == nil {
+		return nil
+	}
+	storage := v.src.Files()
+	candidates := make([]canvasTab, 0, len(ch.Properties.Tabs)+1)
+	for _, t := range ch.Properties.Tabs {
+		if t.Type != "canvas" || t.ID == "" {
+			continue
+		}
+		label := t.Label
+		if label == "" {
+			label = "Canvas"
+		}
+		candidates = append(candidates, canvasTab{FileID: t.ID, Label: label})
+	}
+	if len(candidates) == 0 && ch.Properties.Canvas.FileId != "" {
+		candidates = append(candidates, canvasTab{FileID: ch.Properties.Canvas.FileId, Label: "Canvas"})
+	}
+	out := candidates[:0]
+	for _, c := range candidates {
+		if _, err := fileByID(storage, c.FileID); err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 type userView struct {

@@ -115,6 +115,23 @@ func (r *Routes) CanvasContent(id string) string {
 	return routePath("archives", id, "canvas", "content")
 }
 
+// CanvasByFile returns the URL of a specific canvas page, identified by the
+// canvas file ID. Used when a channel has multiple canvases (e.g. tab canvases).
+func (r *Routes) CanvasByFile(channelID, fileID string) string {
+	if r != nil && r.mode == ModeStatic {
+		return routePath("archives", channelID, "canvas", fileID, "index.html")
+	}
+	return routePath("archives", channelID, "canvas", fileID)
+}
+
+// CanvasContentByFile returns the URL of a specific canvas content iframe.
+func (r *Routes) CanvasContentByFile(channelID, fileID string) string {
+	if r != nil && r.mode == ModeStatic {
+		return routePath("archives", channelID, "canvas", fileID, "content.html")
+	}
+	return routePath("archives", channelID, "canvas", fileID, "content")
+}
+
 func (r *Routes) File(id, filename string) string {
 	if r != nil && r.mode == ModeStatic {
 		return routePath("files", id, source.SanitizeFilename(filename))

@@ -289,10 +289,10 @@ func TestCanvasHandler_RendersFullPageWithoutHTMX(t *testing.T) {
 	if !strings.Contains(body, "<!DOCTYPE html>") {
 		t.Fatalf("canvasHandler() should render full page HTML: %q", body)
 	}
-	if !strings.Contains(body, `src="/archives/C1/canvas/content"`) {
+	if !strings.Contains(body, `src="/archives/C1/canvas/FCANVAS/content"`) {
 		t.Fatalf("canvasHandler() should include canvas iframe: %q", body)
 	}
-	if !strings.Contains(body, `id="channel-link-C1"`) || !strings.Contains(body, `id="tab-panel-canvas"`) {
+	if !strings.Contains(body, `id="channel-link-C1"`) || !strings.Contains(body, `id="tab-panel-canvas-FCANVAS"`) {
 		t.Fatalf("canvasHandler() full page should include sidebar and canvas content: %q", body)
 	}
 }
@@ -312,7 +312,7 @@ func TestCanvasHandler_RendersHTMXPartial(t *testing.T) {
 	if strings.Contains(body, "<!DOCTYPE html>") {
 		t.Fatalf("canvasHandler() HTMX response should not include full page HTML: %q", body)
 	}
-	if !strings.Contains(body, `id="tab-panel-canvas"`) {
+	if !strings.Contains(body, `id="tab-panel-canvas-FCANVAS"`) {
 		t.Fatalf("canvasHandler() HTMX response should include canvas panel: %q", body)
 	}
 	if !strings.Contains(body, `sandbox="allow-same-origin"`) {
@@ -417,7 +417,7 @@ func TestRenderCanvasContent_MissingCanvasReturnsNotExist(t *testing.T) {
 		files: source.NoStorage{},
 	})
 
-	err := v.RenderCanvasContent(t.Context(), "C1", httptest.NewRecorder())
+	err := v.RenderCanvasContent(t.Context(), "C1", "", httptest.NewRecorder())
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("RenderCanvasContent() error = %v, want fs.ErrNotExist", err)
 	}

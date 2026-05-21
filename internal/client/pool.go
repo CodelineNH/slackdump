@@ -119,6 +119,10 @@ func (p *Pool) GetFileInfoContext(ctx context.Context, fileID string, count int,
 	return p.next().GetFileInfoContext(ctx, fileID, count, page)
 }
 
+func (p *Pool) GetFilesContext(ctx context.Context, params slack.GetFilesParameters) ([]slack.File, *slack.Paging, error) {
+	return p.next().GetFilesContext(ctx, params)
+}
+
 func (p *Pool) GetUserInfoContext(ctx context.Context, user string) (*slack.User, error) {
 	return p.next().GetUserInfoContext(ctx, user)
 }

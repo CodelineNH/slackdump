@@ -102,16 +102,17 @@ func (c *HTMLConverter) Convert(ctx context.Context) error {
 			}
 		}
 
-		if ch.Properties != nil && ch.Properties.Canvas.FileId != "" {
+		for _, fileID := range channelCanvasFileIDs(&ch) {
+			fid := fileID
 			if err := c.renderPage(ctx, func(ctx context.Context, w io.Writer) error {
-				return v.RenderCanvas(ctx, ch.ID, w)
-			}, canvasPagePath(ch.ID)); err != nil {
-				return fmt.Errorf("channel %s canvas: %w", ch.ID, err)
+				return v.RenderCanvas(ctx, ch.ID, fid, w)
+			}, canvasPagePath(ch.ID, fid)); err != nil {
+				return fmt.Errorf("channel %s canvas %s: %w", ch.ID, fid, err)
 			}
 			if err := c.renderRaw(ctx, func(ctx context.Context, w io.Writer) error {
-				return v.RenderCanvasContent(ctx, ch.ID, w)
-			}, canvasContentPath(ch.ID)); err != nil && !errors.Is(err, source.ErrNotFound) && !errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("channel %s canvas content: %w", ch.ID, err)
+				return v.RenderCanvasContent(ctx, ch.ID, fid, w)
+			}, canvasContentPath(ch.ID, fid)); err != nil && !errors.Is(err, source.ErrNotFound) && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("channel %s canvas %s content: %w", ch.ID, fid, err)
 			}
 		}
 
@@ -306,12 +307,32 @@ func threadPagePath(channelID, threadTS string) string {
 	return path.Join("archives", channelID, "threads", threadTS+".html")
 }
 
-func canvasPagePath(channelID string) string {
-	return path.Join("archives", channelID, "canvas", "index.html")
+func canvasPagePath(channelID, fileID string) string {
+	return path.Join("archives", channelID, "canvas", fileID, "index.html")
 }
 
-func canvasContentPath(channelID string) string {
-	return path.Join("archives", channelID, "canvas", "content.html")
+func canvasContentPath(channelID, fileID string) string {
+	return path.Join("archives", channelID, "canvas", fileID, "content.html")
+}
+
+// channelCanvasFileIDs returns the canvas file IDs attached to a channel.
+// Canvas files are recorded as Properties.Tabs[] entries with Type=="canvas";
+// the dumper rewrites Tab.ID to the canvas file ID — see rebuildCanvasTabs
+// in the stream package.
+func channelCanvasFileIDs(ch *slack.Channel) []string {
+	if ch.Properties == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range ch.Properties.Tabs {
+		if t.Type == "canvas" && t.ID != "" {
+			out = append(out, t.ID)
+		}
+	}
+	if len(out) == 0 && ch.Properties.Canvas.FileId != "" {
+		out = append(out, ch.Properties.Canvas.FileId)
+	}
+	return out
 }
 
 func userPagePath(userID string) string {

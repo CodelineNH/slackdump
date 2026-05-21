@@ -101,8 +101,9 @@ func (v *Viewer) RenderUser(ctx context.Context, userID string, w io.Writer) err
 	return v.tmpl.ExecuteTemplate(w, "index.html", page)
 }
 
-// RenderCanvas renders the full canvas tab page for channelID to w.
-func (v *Viewer) RenderCanvas(ctx context.Context, channelID string, w io.Writer) error {
+// RenderCanvas renders the full canvas tab page for channelID to w. If
+// fileID is empty, the first canvas attached to the channel is used.
+func (v *Viewer) RenderCanvas(ctx context.Context, channelID, fileID string, w io.Writer) error {
 	ci, err := v.src.ChannelInfo(ctx, channelID)
 	if err != nil {
 		return err
@@ -112,6 +113,7 @@ func (v *Viewer) RenderCanvas(ctx context.Context, channelID string, w io.Writer
 		return err
 	}
 	page.CanvasActive = true
+	page.ActiveCanvasID = resolveCanvasID(ci, fileID)
 
 	// fetch messages so the full page renders correctly on deep link.
 	itMsg, err := v.allMessagesOrEmpty(ctx, channelID)
@@ -123,18 +125,19 @@ func (v *Viewer) RenderCanvas(ctx context.Context, channelID string, w io.Writer
 	return v.tmpl.ExecuteTemplate(w, "index.html", page)
 }
 
-// RenderCanvasContent writes the raw canvas HTML for channelID to w.
-func (v *Viewer) RenderCanvasContent(ctx context.Context, channelID string, w io.Writer) error {
+// RenderCanvasContent writes the raw canvas HTML for (channelID, fileID) to w.
+// If fileID is empty, the first canvas attached to the channel is used.
+func (v *Viewer) RenderCanvasContent(ctx context.Context, channelID, fileID string, w io.Writer) error {
 	ci, err := v.src.ChannelInfo(ctx, channelID)
 	if err != nil {
 		return err
 	}
-	if ci.Properties == nil || ci.Properties.Canvas.FileId == "" {
+	resolved := resolveCanvasID(ci, fileID)
+	if resolved == "" {
 		return fs.ErrNotExist
 	}
-	fileID := ci.Properties.Canvas.FileId
 	storage := v.src.Files()
-	pth, err := fileByID(storage, fileID)
+	pth, err := fileByID(storage, resolved)
 	if err != nil {
 		return err
 	}
@@ -146,6 +149,44 @@ func (v *Viewer) RenderCanvasContent(ctx context.Context, channelID string, w io
 
 	_, err = io.Copy(w, f)
 	return err
+}
+
+// resolveCanvasID returns the canvas file ID to render. If requested is
+// non-empty and matches a canvas attached to the channel, it's returned
+// verbatim; otherwise the channel's first canvas is used.
+func resolveCanvasID(ci *slack.Channel, requested string) string {
+	tabs := canvasFileIDs(ci)
+	if requested != "" {
+		for _, id := range tabs {
+			if id == requested {
+				return id
+			}
+		}
+	}
+	if len(tabs) > 0 {
+		return tabs[0]
+	}
+	if ci.Properties != nil {
+		return ci.Properties.Canvas.FileId
+	}
+	return ""
+}
+
+// canvasFileIDs returns all canvas file IDs attached to the channel,
+// derived from Properties.Tabs entries with Type=="canvas". The dumper
+// rewrites Tab.ID to the canvas file ID — see rebuildCanvasTabs in the
+// stream package.
+func canvasFileIDs(ci *slack.Channel) []string {
+	if ci.Properties == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range ci.Properties.Tabs {
+		if t.Type == "canvas" && t.ID != "" {
+			out = append(out, t.ID)
+		}
+	}
+	return out
 }
 
 // ── HTTP handlers (thin wrappers) ────────────────────────────────────────────
@@ -253,12 +294,13 @@ func (v *Viewer) userHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *Viewer) canvasHandler(w http.ResponseWriter, r *http.Request, id string) {
+	fileID := r.PathValue("fileID")
 	if isHXRequest(r) {
-		v.canvasPartial(w, r, id)
+		v.canvasPartial(w, r, id, fileID)
 		return
 	}
-	if err := v.RenderCanvas(r.Context(), id, w); err != nil {
-		lg := v.lg.With("in", "canvasHandler", "channel", id)
+	if err := v.RenderCanvas(r.Context(), id, fileID, w); err != nil {
+		lg := v.lg.With("in", "canvasHandler", "channel", id, "file", fileID)
 		lg.ErrorContext(r.Context(), "RenderCanvas", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -268,10 +310,11 @@ func (v *Viewer) canvasHandler(w http.ResponseWriter, r *http.Request, id string
 // channel directly, without requiring the caller to know the filename.
 func (v *Viewer) canvasContentHandler(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
-	lg := v.lg.With("in", "canvasContentHandler", "channel", id)
+	fileID := r.PathValue("fileID")
+	lg := v.lg.With("in", "canvasContentHandler", "channel", id, "file", fileID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := v.RenderCanvasContent(ctx, id, w); err != nil {
+	if err := v.RenderCanvasContent(ctx, id, fileID, w); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			lg.DebugContext(ctx, "canvas file not found", "error", err)
 			http.NotFound(w, r)
@@ -349,9 +392,9 @@ func (v *Viewer) threadPartial(w http.ResponseWriter, r *http.Request, id, ts st
 	}
 }
 
-func (v *Viewer) canvasPartial(w http.ResponseWriter, r *http.Request, id string) {
+func (v *Viewer) canvasPartial(w http.ResponseWriter, r *http.Request, id, fileID string) {
 	ctx := r.Context()
-	lg := v.lg.With("in", "canvasPartial", "channel", id)
+	lg := v.lg.With("in", "canvasPartial", "channel", id, "file", fileID)
 
 	ci, err := v.src.ChannelInfo(ctx, id)
 	if err != nil {
@@ -366,6 +409,7 @@ func (v *Viewer) canvasPartial(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	page.CanvasActive = true
+	page.ActiveCanvasID = resolveCanvasID(ci, fileID)
 	if err := v.tmpl.ExecuteTemplate(w, "hx_canvas", page); err != nil {
 		lg.ErrorContext(ctx, "ExecuteTemplate", "error", err, "template", "hx_canvas")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -560,8 +604,9 @@ type mainView struct {
 	Alias           string // conversation alias
 	AliasError      string
 	CanAlias        bool // if true, alias can be set for the channel
-	CanvasActive    bool // true when the canvas tab is the active tab
-	CanvasAvailable bool // true when the canvas file exists in storage
+	CanvasActive    bool   // true when the canvas tab is the active tab
+	CanvasAvailable bool   // true when the canvas file exists in storage
+	ActiveCanvasID  string // file ID of the canvas to render in the canvas tab
 }
 
 type aliaser interface {

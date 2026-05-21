@@ -124,7 +124,7 @@ func TestRenderUser(t *testing.T) {
 func TestRenderCanvas(t *testing.T) {
 	v := newTestViewer(renderer.ModeLive)
 	var buf bytes.Buffer
-	if err := v.RenderCanvas(context.Background(), "C1", &buf); err != nil {
+	if err := v.RenderCanvas(context.Background(), "C1", "", &buf); err != nil {
 		t.Fatalf("RenderCanvas() error = %v", err)
 	}
 	body := buf.String()
@@ -176,7 +176,7 @@ func TestRenderCanvas_StaticModePreservesSandbox(t *testing.T) {
 	}
 	initTemplates(v)
 	var buf bytes.Buffer
-	if err := v.RenderCanvas(context.Background(), "C1", &buf); err != nil {
+	if err := v.RenderCanvas(context.Background(), "C1", "", &buf); err != nil {
 		t.Fatalf("RenderCanvas() static error = %v", err)
 	}
 	body := buf.String()

@@ -16,6 +16,7 @@
 package renderer
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"log/slog"
@@ -192,8 +193,70 @@ func (s *Slack) rtePreformatted(ie slack.RichTextElement) (string, string, error
 		buf.WriteString(s)
 		cbuf.WriteString(cl)
 	}
-	buf.WriteString(cbuf.String() + "</pre>")
+	buf.WriteString(cbuf.String());buf.WriteString("</pre>")
 	return buf.String(), "", nil
+}
+
+// rtseCanvas renders a "canvas" rich-text-section element. The Slack lib does
+// not model canvas refs natively, so they arrive as RichTextSectionUnknownElement
+// with a Raw JSON payload containing file_id.
+func (s *Slack) rtseCanvas(ie slack.RichTextSectionElement) (string, string, error) {
+	e, ok := ie.(*slack.RichTextSectionUnknownElement)
+	if !ok {
+		return "<i>[canvas]</i>", "", nil
+	}
+	fileID := extractCanvasFileID(e.Raw)
+	if fileID == "" {
+		return "<i>[canvas]</i>", "", nil
+	}
+	escaped := html.EscapeString(fileID)
+	if chID := s.canvasChannelOf(fileID); chID != "" && s.routes != nil {
+		return fmt.Sprintf(`<a class="slack-canvas-link" href="%s">[canvas: %s]</a>`,
+			s.routes.CanvasByFile(chID, fileID), escaped), "", nil
+	}
+	return fmt.Sprintf("<i>[canvas: %s]</i>", escaped), "", nil
+}
+
+// canvasChannelOf searches the channel index for a channel that owns the
+// canvas file. The dumper records canvases either on Properties.Canvas.FileId
+// (primary) or as Properties.Tabs[].ID entries with Type=="canvas" (tab
+// canvases — see rebuildCanvasTabs in the stream package). Returns "" if no
+// channel claims the file.
+func (s *Slack) canvasChannelOf(fileID string) string {
+	if fileID == "" {
+		return ""
+	}
+	for chID, ch := range s.cc {
+		if ch.Properties == nil {
+			continue
+		}
+		if ch.Properties.Canvas.FileId == fileID {
+			return chID
+		}
+		for _, t := range ch.Properties.Tabs {
+			if t.Type == "canvas" && t.ID == fileID {
+				return chID
+			}
+		}
+	}
+	return ""
+}
+
+func extractCanvasFileID(raw string) string {
+	var v struct {
+		FileID string `json:"file_id"`
+		Raw    string `json:"Raw"`
+	}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return ""
+	}
+	if v.FileID != "" {
+		return v.FileID
+	}
+	if v.Raw == "" {
+		return ""
+	}
+	return extractCanvasFileID(v.Raw)
 }
 
 func (s *Slack) rtseUser(ie slack.RichTextSectionElement) (string, string, error) {

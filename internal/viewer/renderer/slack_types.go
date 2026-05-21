@@ -71,6 +71,7 @@ var (
 		slack.RTSEUserGroup: (*Slack).rtseUserGroup,
 		slack.RTSEBroadcast: (*Slack).rtseBroadcast,
 		slack.RTSEColor:     (*Slack).rtseColor,
+		"canvas":            (*Slack).rtseCanvas,
 	}
 
 	rtseTypeClass = map[slack.RichTextSectionElementType]string{

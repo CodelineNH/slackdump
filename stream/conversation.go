@@ -393,38 +393,49 @@ func procFiles(ctx context.Context, proc processor.Filer, channel *slack.Channel
 }
 
 // procChannelInfo fetches the channel info and passes it to the processor.
-func (cs *Stream) procChannelInfo(ctx context.Context, proc processor.ChannelInformer, channelID string, threadTS string) (*slack.Channel, error) {
+// channelInfo fetches channel info via API, caching it. It does NOT call
+// proc.ChannelInfo — callers that need to mutate the returned struct before
+// persistence (e.g. to attach canvas metadata) should use this directly and
+// then persist explicitly.
+func (cs *Stream) channelInfo(ctx context.Context, channelID, threadTS string) (*slack.Channel, error) {
 	ctx, task := trace.NewTask(ctx, "channelInfo")
 	defer task.End()
 
 	trace.Logf(ctx, "channel_id", "%s, threadTS=%q", channelID, threadTS)
 
-	// to avoid fetching the same channel info multiple times, we cache it.
+	if info := cs.chanCache.get(channelID); info != nil {
+		return info, nil
+	}
 	var info *slack.Channel
-	if info = cs.chanCache.get(channelID); info == nil {
-		if err := network.WithRetry(ctx, cs.limits.channels, cs.limits.tier.Tier3.Retries, func(ctx context.Context) error {
-			var err error
-			info, err = cs.client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-				ChannelID:         channelID,
-				IncludeLocale:     true,
-				IncludeNumMembers: true,
-			})
-			if err != nil {
-				if ke, ok := isNonCriticalErr(err); ok {
-					return ke
-				}
-				return fmt.Errorf("error getting channel information: %w", err)
+	if err := network.WithRetry(ctx, cs.limits.channels, cs.limits.tier.Tier3.Retries, func(ctx context.Context) error {
+		var err error
+		info, err = cs.client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+			ChannelID:         channelID,
+			IncludeLocale:     true,
+			IncludeNumMembers: true,
+		})
+		if err != nil {
+			if ke, ok := isNonCriticalErr(err); ok {
+				return ke
 			}
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("api error: %s: %w", channelID, err)
+			return fmt.Errorf("error getting channel information: %w", err)
 		}
-		cs.chanCache.set(channelID, info)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("api error: %s: %w", channelID, err)
+	}
+	cs.chanCache.set(channelID, info)
+	return info, nil
+}
+
+func (cs *Stream) procChannelInfo(ctx context.Context, proc processor.ChannelInformer, channelID string, threadTS string) (*slack.Channel, error) {
+	info, err := cs.channelInfo(ctx, channelID, threadTS)
+	if err != nil {
+		return nil, err
 	}
 	if err := proc.ChannelInfo(ctx, info, threadTS); err != nil {
 		return nil, err
 	}
-
 	return info, nil
 }
 

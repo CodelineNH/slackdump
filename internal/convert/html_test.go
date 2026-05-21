@@ -81,8 +81,8 @@ func TestHTMLConverter_Convert(t *testing.T) {
 			"index.html",
 			"archives/C1/index.html",
 			"archives/C1/threads/1710000000.000001.html",
-			"archives/C1/canvas/index.html",
-			"archives/C1/canvas/content.html",
+			"archives/C1/canvas/Fcanvas/index.html",
+			"archives/C1/canvas/Fcanvas/content.html",
 			"archives/CEMPTY/index.html",
 			"files/F1/hello.txt",
 			"avatars/U1/ada.png",
@@ -132,12 +132,12 @@ func TestHTMLConverter_Convert(t *testing.T) {
 			t.Fatalf("thread page should not include live close button behavior: %q", threadBody)
 		}
 
-		canvasPage := readFile(t, outDir, "archives/C1/canvas/index.html")
-		if !strings.Contains(canvasPage, `src="../../../archives/C1/canvas/content.html"`) {
+		canvasPage := readFile(t, outDir, "archives/C1/canvas/Fcanvas/index.html")
+		if !strings.Contains(canvasPage, `src="../../../../archives/C1/canvas/Fcanvas/content.html"`) {
 			t.Fatalf("canvas page should link to local canvas content relatively: %q", canvasPage)
 		}
 
-		canvasBody := readFile(t, outDir, "archives/C1/canvas/content.html")
+		canvasBody := readFile(t, outDir, "archives/C1/canvas/Fcanvas/content.html")
 		if !strings.Contains(canvasBody, "canvas") {
 			t.Fatalf("canvas content should be written, got %q", canvasBody)
 		}
