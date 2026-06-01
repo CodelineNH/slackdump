@@ -30,8 +30,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/rusq/slackdump/v4"
-	dedupecmd "github.com/rusq/slackdump/v4/cmd/slackdump/internal/diag/dedupe"
 	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	dedupecmd "github.com/rusq/slackdump/v4/cmd/slackdump/internal/diag/dedupe"
 	"github.com/rusq/slackdump/v4/internal/fixtures"
 	"github.com/rusq/slackdump/v4/internal/structures"
 	"github.com/rusq/slackdump/v4/source"
@@ -347,14 +347,21 @@ func Test_latest(t *testing.T) {
 		includeThreads      bool
 		skipCompleteThreads bool
 		lookBack            time.Duration
+		threadCutoff        *time.Time
+		channelCutoff       *time.Time
 		other               *structures.EntityList
 	}
+	staleCutoff := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	dormantTS := time.Date(2021, 6, 1, 0, 0, 0, 0, time.UTC)
+	freshTS := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name     string
-		args     args
-		expectFn func(mr *mock_source.MockResumer)
-		want     *structures.EntityList
-		wantErr  bool
+		name              string
+		args              args
+		expectFn          func(mr *mock_source.MockResumer)
+		want              *structures.EntityList
+		wantHasSourceData bool
+		wantSkippedStale  int
+		wantErr           bool
 	}{
 		{
 			name: "resumer error",
@@ -371,7 +378,7 @@ func Test_latest(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "no entities",
+			name: "empty archive has no source data and is not stale-filtered",
 			args: args{
 				ctx:                 t.Context(),
 				includeThreads:      false,
@@ -381,8 +388,10 @@ func Test_latest(t *testing.T) {
 			expectFn: func(mr *mock_source.MockResumer) {
 				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{}, nil)
 			},
-			want:    &structures.EntityList{},
-			wantErr: false,
+			want:              &structures.EntityList{},
+			wantHasSourceData: false,
+			wantSkippedStale:  0,
+			wantErr:           false,
 		},
 		{
 			name: "returns latest status",
@@ -400,7 +409,8 @@ func Test_latest(t *testing.T) {
 			want: structures.NewEntityListFromItems(
 				structures.EntityItem{Id: "C123", Oldest: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 			),
-			wantErr: false,
+			wantHasSourceData: true,
+			wantErr:           false,
 		},
 		{
 			name: "returns latest status with thread",
@@ -420,7 +430,8 @@ func Test_latest(t *testing.T) {
 				structures.EntityItem{Id: "C123", Oldest: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 				structures.EntityItem{Id: "C456:123.456", Oldest: time.Date(2021, 1, 2, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 			),
-			wantErr: false,
+			wantHasSourceData: true,
+			wantErr:           false,
 		},
 		{
 			name: "returns latest status with thread, but includeThreads is false",
@@ -439,7 +450,8 @@ func Test_latest(t *testing.T) {
 			want: structures.NewEntityListFromItems(
 				structures.EntityItem{Id: "C123", Oldest: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 			),
-			wantErr: false,
+			wantHasSourceData: true,
+			wantErr:           false,
 		},
 		{
 			name: "returns latest status with thread, includeThreads false and skipCompleteThreads true",
@@ -458,7 +470,8 @@ func Test_latest(t *testing.T) {
 			want: structures.NewEntityListFromItems(
 				structures.EntityItem{Id: "C123", Oldest: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 			),
-			wantErr: false,
+			wantHasSourceData: true,
+			wantErr:           false,
 		},
 		{
 			name: "returns latest status with thread and skipCompleteThreads true",
@@ -476,8 +489,182 @@ func Test_latest(t *testing.T) {
 			},
 			want: structures.NewEntityListFromItems(
 				structures.EntityItem{Id: "C123", Oldest: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
+				structures.EntityItem{Id: "C456:123.456", Oldest: time.Date(2021, 1, 2, 0, 0, 0, 0, time.UTC), Latest: time.Time(cfg.Latest), Include: true},
 			),
-			wantErr: false,
+			wantHasSourceData: true,
+			wantErr:           false,
+		},
+		{
+			name: "skip-stale-threads drops dormant thread, keeps fresh thread and channels",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: true,
+				lookBack:       0,
+				threadCutoff:   &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-fresh-ch"}:                        freshTS,
+					{Channel: "C-dormant-ch"}:                      dormantTS,
+					{Channel: "C-fresh-th", ThreadTS: "111.111"}:   freshTS,
+					{Channel: "C-dormant-th", ThreadTS: "222.222"}: dormantTS,
+				}, nil)
+			},
+			want: structures.NewEntityListFromItems(
+				structures.EntityItem{Id: "C-fresh-ch", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+				structures.EntityItem{Id: "C-dormant-ch", Oldest: dormantTS, Latest: time.Time(cfg.Latest), Include: true},
+				structures.EntityItem{Id: "C-fresh-th:111.111", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+			),
+			wantHasSourceData: true,
+			wantSkippedStale:  1,
+			wantErr:           false,
+		},
+		{
+			name: "skip-stale-channels drops dormant channel, keeps fresh channel; threads excluded by default",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: false,
+				lookBack:       0,
+				channelCutoff:  &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-fresh-ch"}:                      freshTS,
+					{Channel: "C-dormant-ch"}:                    dormantTS,
+					{Channel: "C-fresh-th", ThreadTS: "111.111"}: freshTS,
+				}, nil)
+			},
+			want: structures.NewEntityListFromItems(
+				structures.EntityItem{Id: "C-fresh-ch", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+			),
+			wantHasSourceData: true,
+			wantSkippedStale:  1,
+			wantErr:           false,
+		},
+		{
+			name: "both cutoffs drop dormant entities of both types, keep fresh",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: true,
+				lookBack:       0,
+				threadCutoff:   &staleCutoff,
+				channelCutoff:  &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-fresh-ch"}:                        freshTS,
+					{Channel: "C-dormant-ch"}:                      dormantTS,
+					{Channel: "C-fresh-th", ThreadTS: "111.111"}:   freshTS,
+					{Channel: "C-dormant-th", ThreadTS: "222.222"}: dormantTS,
+				}, nil)
+			},
+			want: structures.NewEntityListFromItems(
+				structures.EntityItem{Id: "C-fresh-ch", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+				structures.EntityItem{Id: "C-fresh-th:111.111", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+			),
+			wantHasSourceData: true,
+			wantSkippedStale:  2,
+			wantErr:           false,
+		},
+		{
+			name: "skip-stale-threads cutoff does not affect channel entities",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: false,
+				lookBack:       0,
+				threadCutoff:   &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-fresh-ch"}:   freshTS,
+					{Channel: "C-dormant-ch"}: dormantTS,
+				}, nil)
+			},
+			want: structures.NewEntityListFromItems(
+				structures.EntityItem{Id: "C-fresh-ch", Oldest: freshTS, Latest: time.Time(cfg.Latest), Include: true},
+				structures.EntityItem{Id: "C-dormant-ch", Oldest: dormantTS, Latest: time.Time(cfg.Latest), Include: true},
+			),
+			wantHasSourceData: true,
+			wantErr:           false,
+		},
+		{
+			name: "skip-stale-channels filters every channel and is stale-filtered",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: false,
+				lookBack:       0,
+				channelCutoff:  &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-dormant-ch"}:  dormantTS,
+					{Channel: "C-dormant-ch2"}: dormantTS,
+				}, nil)
+			},
+			want:              structures.NewEntityListFromItems(),
+			wantHasSourceData: true,
+			wantSkippedStale:  2,
+			wantErr:           false,
+		},
+		{
+			name: "skip-stale-threads with threads filters every thread and is stale-filtered",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: true,
+				lookBack:       0,
+				threadCutoff:   &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-dormant-th", ThreadTS: "111.111"}:  dormantTS,
+					{Channel: "C-dormant-th2", ThreadTS: "222.222"}: dormantTS,
+				}, nil)
+			},
+			want:              structures.NewEntityListFromItems(),
+			wantHasSourceData: true,
+			wantSkippedStale:  2,
+			wantErr:           false,
+		},
+		{
+			name: "threads excluded only because threads flag is false are not stale-filtered",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: false,
+				lookBack:       0,
+				threadCutoff:   &staleCutoff,
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-dormant-th", ThreadTS: "111.111"}: dormantTS,
+				}, nil)
+			},
+			want:              structures.NewEntityListFromItems(),
+			wantHasSourceData: true,
+			wantSkippedStale:  0,
+			wantErr:           false,
+		},
+		{
+			name: "explicit entity overlay after stale filtering prevents empty no-op",
+			args: args{
+				ctx:            t.Context(),
+				includeThreads: false,
+				lookBack:       0,
+				channelCutoff:  &staleCutoff,
+				other: structures.NewEntityListFromItems(
+					structures.EntityItem{Id: "C-explicit", Include: true},
+				),
+			},
+			expectFn: func(mr *mock_source.MockResumer) {
+				mr.EXPECT().Latest(gomock.Any()).Return(map[structures.SlackLink]time.Time{
+					{Channel: "C-dormant-ch"}: dormantTS,
+				}, nil)
+			},
+			want: structures.NewEntityListFromItems(
+				structures.EntityItem{Id: "C-explicit", Include: true},
+			),
+			wantHasSourceData: true,
+			wantSkippedStale:  1,
+			wantErr:           false,
 		},
 	}
 	for _, tt := range tests {
@@ -487,12 +674,63 @@ func Test_latest(t *testing.T) {
 			if tt.expectFn != nil {
 				tt.expectFn(mr)
 			}
-			got, err := latest(tt.args.ctx, mr, tt.args.includeThreads, tt.args.skipCompleteThreads, tt.args.lookBack, tt.args.other)
+			got, err := latest(tt.args.ctx, mr, tt.args.includeThreads, tt.args.skipCompleteThreads, tt.args.lookBack, tt.args.threadCutoff, tt.args.channelCutoff, tt.args.other)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("latest() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, got.list)
+			assert.Equal(t, tt.wantHasSourceData, got.hasSourceData)
+			assert.Equal(t, tt.wantSkippedStale, got.skippedStale)
+		})
+	}
+}
+
+func Test_decideResume(t *testing.T) {
+	tests := []struct {
+		name string
+		in   latestResult
+		want resumeDecision
+	}{
+		{
+			name: "empty source is invalid archive",
+			in: latestResult{
+				list: &structures.EntityList{},
+			},
+			want: resumeDecisionInvalidArchive,
+		},
+		{
+			name: "fully stale-filtered source is no-op",
+			in: latestResult{
+				list:          &structures.EntityList{},
+				hasSourceData: true,
+				skippedStale:  1,
+			},
+			want: resumeDecisionNoop,
+		},
+		{
+			name: "non-empty selected entities continue",
+			in: latestResult{
+				list: structures.NewEntityListFromItems(
+					structures.EntityItem{Id: "C123", Include: true},
+				),
+				hasSourceData: true,
+				skippedStale:  1,
+			},
+			want: resumeDecisionContinue,
+		},
+		{
+			name: "source data excluded for non-stale reason is invalid archive",
+			in: latestResult{
+				list:          &structures.EntityList{},
+				hasSourceData: true,
+			},
+			want: resumeDecisionInvalidArchive,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, decideResume(tt.in))
 		})
 	}
 }
